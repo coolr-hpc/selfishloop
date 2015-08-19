@@ -130,6 +130,35 @@ static void calc_detour_percent(struct selfish_rec *sr)
 
 }
 
+static void selfish_rec_output(struct selfish_rec *sr, const char* prefix, int tno, uint64_t tickspersec)
+{
+	int i;
+	FILE *fp;
+	char fn[BUFSIZ];
+
+	if (!sr)
+		return;
+
+	snprintf(fn, BUFSIZ, "%s-t%03d.txt", prefix, tno);
+	fp = fopen(fn, "w");
+	if (!fp) {
+		printf("Failed to write to %s\n", fn);
+		return ;
+	}
+
+	for (i=0; i<sr->nrecorded; i++) {
+		uint64_t s, d;
+		s = sr->detours[i].start -  sr->detours[0].start;
+		d = sr->detours[i].duration;
+		fprintf(fp,"%.3lf %.3lf    %lu  %lu\n",
+			(double)s/(double)(tickspersec/1000/1000),
+			(double)d/(double)(tickspersec/1000/1000),
+			s,d );
+	}
+	fclose(fp);
+}
+
+
 static void selfish_rec_report( struct selfish_rec *sr, int tno)
 {
 	if (!sr)
@@ -139,16 +168,6 @@ static void selfish_rec_report( struct selfish_rec *sr, int tno)
 	       tno,
 	       sr->detour_percent,  sr->elapsed,
 	       sr->min, sr->max, sr->nrecorded );
-#if 0	
-	for (i=0; i<10; i++) {
-		uint64_t s, d;
-		s = sr->detours[i].start -  sr->detours[0].start;
-		d = sr->detours[i].duration;
-		printf("%3d %.1lf %.1lf # %lu  %lu\n", i, 
-			(double)s/(2.3*1000.0),(double)d/(2.3*1000.0), s,d );
-		
-	}
-#endif
 }
 
 
@@ -169,6 +188,12 @@ static void  usage(const char* prog)
 	printf("Usage: %s [options]\n", prog);
 	printf("\n");
 	printf("[options]\n");
+	printf("\n");
+	printf("-v : enable verbose output\n");
+	printf("-n int : the size of the detour record array\n");
+	printf("-t int : timeout in ticks\n");
+	printf("-d int : threshold in ticks.  detours longer than this value are recorded\n");
+	printf("-o prefix : output detours data per-thread.\n");
 	printf("\n");
 	printf("\n");
 }
@@ -206,8 +231,10 @@ int main(int argc, char *argv[])
 	uint64_t threshold = 1000;  /* cycles ~400ns (on what arch?) */
 	uint64_t timeout = 1ULL*1000*1000*1000;  /* cycles */
 	uint64_t tickspersec;
+	char oprefix[80];
+	oprefix[0] = 0;
 
-	while ((opt = getopt(argc, argv, "vhn:d:t:")) != -1) {
+	while ((opt = getopt(argc, argv, "vhn:d:t:o:")) != -1) {
 		switch(opt) {
 		case 'h':
 			usage(argv[0]);
@@ -224,6 +251,10 @@ int main(int argc, char *argv[])
 		case 'v':
 			verbose++;
 			break;
+		case 'o':
+			strncpy(oprefix, optarg, sizeof(oprefix));
+			oprefix[sizeof(oprefix)-1] = 0;
+			break;
 		default:
 			printf("Unknown option: '%s'\n", optarg);
 			usage(argv[0]);
@@ -234,12 +265,13 @@ int main(int argc, char *argv[])
 	
 	timeout = tickspersec = measure_tickspersec();
 	
-	printf("# ndetours:    %u\n", ndetours);
-	printf("# threshold:   %lu (ticks)\n", threshold);
-	printf("# tickspersec: %lu (ticks)\n", tickspersec);
-	printf("# timeout:     %lu (ticks)\n", timeout);
-
-
+	printf("# ndetours:     %u\n", ndetours);
+	printf("# threshold:    %lu (ticks)\n", threshold);
+	printf("# tickspersec:  %lu (ticks)\n", tickspersec);
+	printf("# timeout:      %lu (ticks)\n", timeout);
+	if (strlen(oprefix) > 0 ) {
+		printf("# outputprefix: %s\n", oprefix);
+	}
 
 #pragma omp parallel shared(av_percent, nth, ndetours, threshold, timeout)
 	{
@@ -262,6 +294,9 @@ int main(int argc, char *argv[])
 #pragma omp barrier
 		if (verbose) 
 			selfish_rec_report(sr, tno);
+
+		if (strlen(oprefix) > 0 )
+			selfish_rec_output(sr, oprefix, tno, tickspersec);
 
 #pragma omp critical 
 		av_percent += sr->detour_percent;
