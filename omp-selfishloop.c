@@ -135,10 +135,10 @@ static void selfish_rec_report( struct selfish_rec *sr, int tno)
 	if (!sr)
 		return;
 	
-	printf("%3d: dutour=%.3lf %%  elapsed=%lu  min=%lu max=%lu \n",
+	printf("%3d: dutour=%.3lf %%  elapsed=%lu  min=%lu max=%lu nr=%d\n",
 	       tno,
 	       sr->detour_percent,  sr->elapsed,
-	       sr->min, sr->max );
+	       sr->min, sr->max, sr->nrecorded );
 #if 0	
 	for (i=0; i<10; i++) {
 		uint64_t s, d;
@@ -173,6 +173,29 @@ static void  usage(const char* prog)
 	printf("\n");
 }
 
+static double measure_tickspersec(void)
+{
+	double    wt1, wt2;
+	uint64_t  t1, t2;
+	double  timeout = 2.0;
+	
+	wt1 = omp_get_wtime();
+	rdtsc_barrier();
+	t1 = rdtsc();
+	rdtsc_barrier();
+
+	while(1) {
+		if( (omp_get_wtime() - wt1) >= timeout )
+			break;
+	}
+	rdtsc_barrier();
+	t2 = rdtsc();
+	rdtsc_barrier();
+	wt2 = omp_get_wtime();
+
+	return (double)(t2-t1)/(wt2-wt1);
+}
+
 int main(int argc, char *argv[])
 {
 	double  av_percent = 0.0;
@@ -182,8 +205,9 @@ int main(int argc, char *argv[])
 	int verbose = 0;
 	uint64_t threshold = 1000;  /* cycles ~400ns (on what arch?) */
 	uint64_t timeout = 1ULL*1000*1000*1000;  /* cycles */
+	uint64_t tickspersec;
 
-	while ((opt = getopt(argc, argv, "hn:d:t:")) != -1) {
+	while ((opt = getopt(argc, argv, "vhn:d:t:")) != -1) {
 		switch(opt) {
 		case 'h':
 			usage(argv[0]);
@@ -198,7 +222,7 @@ int main(int argc, char *argv[])
 			timeout = strtoull(optarg, NULL, 10);
 			break;
 		case 'v':
-			verbose = 1;
+			verbose++;
 			break;
 		default:
 			printf("Unknown option: '%s'\n", optarg);
@@ -207,9 +231,15 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	printf("# ndetours:   %u\n", ndetours);
-	printf("# threshold:  %lu\n", threshold);
-	printf("# timeout:    %lu\n", timeout);
+	
+	timeout = tickspersec = measure_tickspersec();
+	
+	printf("# ndetours:    %u\n", ndetours);
+	printf("# threshold:   %lu (ticks)\n", threshold);
+	printf("# tickspersec: %lu (ticks)\n", tickspersec);
+	printf("# timeout:     %lu (ticks)\n", timeout);
+
+
 
 #pragma omp parallel shared(av_percent, nth, ndetours, threshold, timeout)
 	{
