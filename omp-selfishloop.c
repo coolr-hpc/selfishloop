@@ -31,6 +31,7 @@ struct selfish_rec {
 	struct selfish_detour *detours; // alloc by caller
 	uint64_t elapsed;
 	int nrecorded;
+	uint64_t niterated;
 
 	/* update by analyzing functions */
 	double  detour_percent;
@@ -79,21 +80,22 @@ static inline void rdtsc_barrier(void)
 void selfish_rec_loop(struct selfish_rec *sr)
 {
 	uint64_t prev, cur, delta, start;
+	uint64_t niterated = 0;
 	int idx = -10; // minus number for warmups
 
-	if(!sr) return;
+	if (!sr) return;
 
 	sr->nrecorded = 0;
 	sr->max = 0;
 	sr->min = 1<<31;
 
 	start = prev = rdtsc();
-	for(;;) {
+	for (niterated = 0;;niterated++) {
 		rdtsc_barrier();
 		cur = rdtsc();
 		rdtsc_barrier();
 		delta = cur - prev;
-		if(delta > sr->threshold) {
+		if (delta > sr->threshold) {
 			if (idx >= 0 ) {
 				if (idx == 0)
 					start = prev;
@@ -116,6 +118,7 @@ void selfish_rec_loop(struct selfish_rec *sr)
 	}
 	rdtsc_barrier();
 	sr->elapsed = rdtsc() - sr->detours[0].start;
+	sr->niterated = niterated;
 }
 
 static void calc_detour_percent(struct selfish_rec *sr)
@@ -224,6 +227,7 @@ static double measure_tickspersec(void)
 int main(int argc, char *argv[])
 {
 	double  av_percent = 0.0;
+	double  av_niterated = 0;
 	int nth;
 	int opt;
 	int ndetours = 3000;
@@ -273,7 +277,7 @@ int main(int argc, char *argv[])
 		printf("# outputprefix: %s\n", oprefix);
 	}
 
-#pragma omp parallel shared(av_percent, nth, ndetours, threshold, timeout)
+#pragma omp parallel shared(av_percent, av_niterated, nth, ndetours, threshold, timeout)
 	{
 		struct selfish_rec *sr;
 		int tno;
@@ -299,11 +303,15 @@ int main(int argc, char *argv[])
 			selfish_rec_output(sr, oprefix, tno, tickspersec);
 
 #pragma omp critical 
-		av_percent += sr->detour_percent;
+		{
+			av_percent += sr->detour_percent;
+			av_niterated += sr->niterated;
+		}
 
 		selfish_rec_finilize(sr);
 	}
 	printf("detour_mean=%lf %%\n",  av_percent/nth);
+	printf("niterated_mean=%g\n",  av_niterated/nth);
 
 	return 0;
 }
