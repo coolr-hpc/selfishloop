@@ -130,7 +130,6 @@ static void calc_detour_percent(struct selfish_rec *sr)
 	}
 	sr->detour_sum = sum;
 	sr->detour_percent = (double)sum*100.0/(double)sr->elapsed;
-
 }
 
 static void selfish_rec_output(struct selfish_rec *sr, const char* prefix, int tno, uint64_t tickspersec)
@@ -228,12 +227,14 @@ int main(int argc, char *argv[])
 {
 	double  av_percent = 0.0;
 	double  av_niterated = 0;
+	double  av_nrecorded = 0;
 	int nth;
 	int opt;
 	int ndetours = 3000;
 	int verbose = 0;
 	uint64_t threshold = 1000;  /* cycles ~400ns (on what arch?) */
-	uint64_t timeout = 1ULL*1000*1000*1000;  /* cycles */
+	int timeoutsec = 2;
+	uint64_t timeoutticks;
 	uint64_t tickspersec;
 	char oprefix[80];
 	oprefix[0] = 0;
@@ -250,7 +251,7 @@ int main(int argc, char *argv[])
 			threshold = strtoull(optarg, NULL, 10);
 			break;
 		case 't':
-			timeout = strtoull(optarg, NULL, 10);
+			timeoutsec = strtol(optarg, NULL, 10);
 			break;
 		case 'v':
 			verbose++;
@@ -266,18 +267,20 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	
-	timeout = tickspersec = measure_tickspersec();
+	tickspersec = measure_tickspersec();
+	timeoutticks = tickspersec * timeoutsec;
 	
 	printf("# ndetours:     %u\n", ndetours);
 	printf("# threshold:    %lu (ticks)\n", threshold);
 	printf("# tickspersec:  %lu (ticks)\n", tickspersec);
-	printf("# timeout:      %lu (ticks)\n", timeout);
+	printf("# timeoutsec:   %d (sec)\n", timeoutsec);
+	printf("# timeoutticks: %lu (ticks)\n", timeoutticks);
 	if (strlen(oprefix) > 0 ) {
 		printf("# outputprefix: %s\n", oprefix);
 	}
 
-#pragma omp parallel shared(av_percent, av_niterated, nth, ndetours, threshold, timeout)
+#pragma omp parallel shared(nth, ndetours, threshold, timeoutticks, \
+			    av_percent, av_niterated, av_nrecorded)
 	{
 		struct selfish_rec *sr;
 		int tno;
@@ -287,7 +290,7 @@ int main(int argc, char *argv[])
 			printf("# n. threads: %d\n", nth);
 		}
 		set_strict_affinity(tno);
-		sr = selfish_rec_init(ndetours, threshold, timeout);
+		sr = selfish_rec_init(ndetours, threshold, timeoutticks);
 		if (!sr) {
 			printf("selfish_rec_init() failed\n");
 			exit(1);
@@ -306,12 +309,14 @@ int main(int argc, char *argv[])
 		{
 			av_percent += sr->detour_percent;
 			av_niterated += sr->niterated;
+			av_nrecorded += sr->nrecorded;
 		}
 
 		selfish_rec_finilize(sr);
 	}
 	printf("detour_mean=%lf %%\n",  av_percent/nth);
 	printf("niterated_mean=%g\n",  av_niterated/nth);
+	printf("nrecorded_mean=%g\n",  av_nrecorded/nth);
 
 	return 0;
 }
