@@ -41,7 +41,7 @@ struct selfish_data {
 	char output_jsonfn[512];
 };
 
-extern void output_json(struct selfish_data sd);
-extern void report_simple_stat(struct selfish_data sd);
+extern void output_json(struct selfish_data *sd);
+extern void report_simple_stat(struct selfish_data *sd);
 
 #endif

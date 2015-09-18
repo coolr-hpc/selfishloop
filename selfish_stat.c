@@ -39,10 +39,23 @@ static void selfish_rec_output(struct selfish_rec *sr,
 }
 #endif
 
-static void analyze(struct selfish_rec *sr)
+
+static double ticks2usec(struct selfish_data *sd, uint64_t val)
+{
+	double ret;
+
+	ret = (double)val / (double)sd->tickspersec;
+	ret *= 1e+6;
+	return ret;
+}
+
+static void analyze(struct selfish_data *sd, int threadid)
 {
 	int i, n;
 	double  tmp, tmp2;
+	struct selfish_rec *sr;
+
+	sr = sd->srs[threadid];
 
 	n = sr->nrecorded;
 	tmp = 0.0;
@@ -64,15 +77,20 @@ static void analyze(struct selfish_rec *sr)
 
 
 
-void report_simple_stat(struct selfish_data sd)
+void report_simple_stat(struct selfish_data *sd)
 {
 	int i;
 	struct selfish_rec *sr;
 
-	for (i = 0; i < sd.nth; i++) {
-		sr = sd.srs[i];
-		analyze(sr);
+	printf("# cpuid detour[%%] mean[usec] std\n");
+	for (i = 0; i < sd->nth; i++) {
+		analyze(sd, i);
 
-		printf("%2d: %lf\n", i, sr->sum * 100.0 / (double)sr->elapsed);
+		sr = sd->srs[i];
+
+		printf("%2d %lf %lf %lf\n", i,
+		       sr->sum * 100.0 / (double)sr->elapsed,
+		       ticks2usec(sd, sr->mean),
+		       ticks2usec(sd, sr->sd));
 	}
 }

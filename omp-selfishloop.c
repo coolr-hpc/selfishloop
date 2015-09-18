@@ -201,7 +201,8 @@ int main(int argc, char *argv[])
 			sd.verbose++;
 			break;
 		case 'o':
-			strncpy(sd.output_jsonfn, optarg, sizeof(sd.output_jsonfn));
+			strncpy(sd.output_jsonfn, optarg,
+				sizeof(sd.output_jsonfn));
 			sd.output_jsonfn[sizeof(sd.output_jsonfn)-1] = 0;
 		default:
 			printf("Unknown option: '%s'\n", optarg);
@@ -238,7 +239,8 @@ int main(int argc, char *argv[])
 		/* sr is allocated and touched by each thread, so
 		 * memory should be local on NUMA.
 		 */
-		sr = selfish_rec_init(sd.ndetours, sd.threshold, sd.timeoutticks);
+		sr = selfish_rec_init(sd.ndetours,
+				      sd.threshold, sd.timeoutticks);
 		if (!sr) {
 			printf("selfish_rec_init() failed\n");
 			exit(1);
@@ -249,9 +251,9 @@ int main(int argc, char *argv[])
 	}
 
 	if (strlen(sd.output_jsonfn) > 0)
-		output_json(sd);
+		output_json(&sd);
 
-	report_simple_stat(sd);
+	report_simple_stat(&sd);
 
 	for (i = 0; i < sd.nth; i++)
 		selfish_rec_finilize(sd.srs[i]);

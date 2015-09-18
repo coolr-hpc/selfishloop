@@ -6,9 +6,10 @@
 #include "selfish_rec.h"
 
 
-void output_json(struct selfish_data sd)
+void output_json(struct selfish_data *sd)
 {
-	printf("nth=%d\n", sd.nth);
-}       
+	/* XXX: not yet, fill this func */
 
+	printf("nth=%d\n", sd->nth);
+}
 
