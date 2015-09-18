@@ -17,28 +17,7 @@
 
 #include <omp.h>
 
-struct selfish_detour {
-	uint64_t start;
-	uint64_t duration;
-};
-
-struct selfish_rec {
-	/* set by caller */
-	int ndetours;
-	uint64_t timeout;
-	uint64_t threshold;
-
-	/* fill by selfishloop() */
-	uint64_t max, min;
-	struct selfish_detour *detours; /* alloc by caller */
-	uint64_t elapsed;
-	int nrecorded;
-	uint64_t niterated;
-
-	/* update by analyzing functions */
-	double  detour_percent;
-	double  detour_sum;
-};
+#include "selfish_rec.h"
 
 static struct selfish_rec *selfish_rec_init(
 			  int ndetours, uint64_t threshold,
@@ -127,61 +106,6 @@ void selfish_rec_loop(struct selfish_rec *sr)
 	sr->niterated = niterated;
 }
 
-static void calc_detour_percent(struct selfish_rec *sr)
-{
-	int i;
-	double  sum = 0.0;
-
-	for (i = 0; i < sr->ndetours; i++)
-		sum += (double)sr->detours[i].duration;
-
-	sr->detour_sum = sum;
-	sr->detour_percent = (double)sum*100.0/(double)sr->elapsed;
-}
-
-static void selfish_rec_output(struct selfish_rec *sr,
-			       const char *prefix, int tno,
-			       uint64_t tickspersec)
-{
-	int i;
-	FILE *fp;
-	char fn[BUFSIZ];
-
-	if (!sr)
-		return;
-
-	snprintf(fn, BUFSIZ, "%s-t%03d.txt", prefix, tno);
-	fp = fopen(fn, "w");
-	if (!fp) {
-		printf("Failed to write to %s\n", fn);
-		return;
-	}
-
-	for (i = 0; i < sr->nrecorded; i++) {
-		uint64_t s, d;
-
-		s = sr->detours[i].start -  sr->detours[0].start;
-		d = sr->detours[i].duration;
-		fprintf(fp, "%.3lf %.3lf    %lu  %lu\n",
-			(double)s/(double)(tickspersec/1000/1000),
-			(double)d/(double)(tickspersec/1000/1000),
-			s, d);
-	}
-	fclose(fp);
-}
-
-
-static void selfish_rec_report(struct selfish_rec *sr, int tno)
-{
-	if (!sr)
-		return;
-
-	printf("%3d: dutour=%.3lf %%  elapsed=%lu  min=%lu max=%lu nr=%d\n",
-	       tno,
-	       sr->detour_percent,  sr->elapsed,
-	       sr->min, sr->max, sr->nrecorded);
-}
-
 
 void set_strict_affinity(int cpuid)
 {
@@ -206,7 +130,9 @@ static void  usage(const char *prog)
 	printf("-t int : timeout in ticks\n");
 	printf("-d int : threshold in ticks.\n");
 	printf("         detours longer than this value are recorded\n");
-	printf("-o prefix : output detours data per-thread.\n");
+	printf("-o prefix : prefix for storing per-thread detour data\n");
+	printf("            for quick drawing using gnuplot\n");
+	printf("-j filename : json output\n");
 	printf("\n");
 	printf("\n");
 }
@@ -234,22 +160,28 @@ static double measure_tickspersec(void)
 	return (double)(t2-t1)/(wt2-wt1);
 }
 
+
+
 int main(int argc, char *argv[])
 {
-	double  av_percent = 0.0;
-	double  av_niterated = 0;
-	double  av_nrecorded = 0;
-	int nth;
-	int opt;
-	int ndetours = 3000;
-	int verbose = 0;
-	uint64_t threshold = 1000;  /* cycles ~400ns (on what arch?) */
-	int timeoutsec = 2;
-	uint64_t timeoutticks;
-	uint64_t tickspersec;
-	char oprefix[80];
+	int i, opt;
+	struct selfish_data sd;
 
-	oprefix[0] = 0;
+	memset(&sd, 0, sizeof(struct selfish_data));
+
+	/* default setting */
+	sd.ndetours = 3000;
+	sd.threshold = 1000;  /* cycles ~400ns (on what arch?) */
+	sd.timeoutsec = 2;
+	sd.verbose = 0;
+
+	sd.nth = omp_get_max_threads();
+	sd.srs = (struct selfish_rec **)
+		malloc(sizeof(struct selfish_rec *) * sd.nth);
+	if (!sd.srs) {
+		perror("malloc");
+		exit(1);
+	}
 
 	while ((opt = getopt(argc, argv, "vhn:d:t:o:")) != -1) {
 		switch (opt) {
@@ -257,21 +189,20 @@ int main(int argc, char *argv[])
 			usage(argv[0]);
 			exit(1);
 		case 'n':
-			ndetours = atoi(optarg);
+			sd.ndetours = atoi(optarg);
 			break;
 		case 'd':
-			threshold = strtoull(optarg, NULL, 10);
+			sd.threshold = strtoull(optarg, NULL, 10);
 			break;
 		case 't':
-			timeoutsec = strtol(optarg, NULL, 10);
+			sd.timeoutsec = strtol(optarg, NULL, 10);
 			break;
 		case 'v':
-			verbose++;
+			sd.verbose++;
 			break;
 		case 'o':
-			strncpy(oprefix, optarg, sizeof(oprefix));
-			oprefix[sizeof(oprefix)-1] = 0;
-			break;
+			strncpy(sd.output_jsonfn, optarg, sizeof(sd.output_jsonfn));
+			sd.output_jsonfn[sizeof(sd.output_jsonfn)-1] = 0;
 		default:
 			printf("Unknown option: '%s'\n", optarg);
 			usage(argv[0]);
@@ -279,56 +210,51 @@ int main(int argc, char *argv[])
 		}
 	}
 
-	tickspersec = measure_tickspersec();
-	timeoutticks = tickspersec * timeoutsec;
+	sd.tickspersec = measure_tickspersec();
+	sd.timeoutticks = sd.tickspersec * sd.timeoutsec;
 
-	printf("# ndetours:     %u\n", ndetours);
-	printf("# threshold:    %lu (ticks)\n", threshold);
-	printf("# tickspersec:  %lu (ticks)\n", tickspersec);
-	printf("# timeoutsec:   %d (sec)\n", timeoutsec);
-	printf("# timeoutticks: %lu (ticks)\n", timeoutticks);
-	if (strlen(oprefix) > 0)
-		printf("# outputprefix: %s\n", oprefix);
+	printf("# [config]\n");
+	printf("# maxrecordsize=%u\n", sd.ndetours);
+	printf("# thresholdticks=%lu\n", sd.threshold);
+	printf("# tickspersec=%lu\n", sd.tickspersec);
+	printf("# timeoutsec=%d\n", sd.timeoutsec);
+	printf("# timeoutticks=%lu\n", sd.timeoutticks);
 
-#pragma omp parallel shared(nth, ndetours, threshold, timeoutticks, \
-			    av_percent, av_niterated, av_nrecorded)
+	if (strlen(sd.output_jsonfn) > 0)
+		printf("# output=%s\n", sd.output_jsonfn);
+
+
+#pragma omp parallel shared(sd)
 	{
-		struct selfish_rec *sr;
 		int tno;
+		struct selfish_rec *sr;
 
 		tno = omp_get_thread_num();
 		if (tno == 0) {
-			nth = omp_get_num_threads();
-			printf("# n. threads: %d\n", nth);
+			sd.nth = omp_get_num_threads();
+			printf("# nompthreads=%d\n", sd.nth);
 		}
 		set_strict_affinity(tno);
-		sr = selfish_rec_init(ndetours, threshold, timeoutticks);
+		/* sr is allocated and touched by each thread, so
+		 * memory should be local on NUMA.
+		 */
+		sr = selfish_rec_init(sd.ndetours, sd.threshold, sd.timeoutticks);
 		if (!sr) {
 			printf("selfish_rec_init() failed\n");
 			exit(1);
 		}
+		sd.srs[tno] = sr;
 #pragma omp barrier
 		selfish_rec_loop(sr);
-		calc_detour_percent(sr);
-#pragma omp barrier
-		if (verbose)
-			selfish_rec_report(sr, tno);
-
-		if (strlen(oprefix) > 0)
-			selfish_rec_output(sr, oprefix, tno, tickspersec);
-
-#pragma omp critical
-		{
-			av_percent += sr->detour_percent;
-			av_niterated += sr->niterated;
-			av_nrecorded += sr->nrecorded;
-		}
-
-		selfish_rec_finilize(sr);
 	}
-	printf("detour_mean=%lf %%\n",  av_percent/nth);
-	printf("niterated_mean=%g\n",  av_niterated/nth);
-	printf("nrecorded_mean=%g\n",  av_nrecorded/nth);
+
+	if (strlen(sd.output_jsonfn) > 0)
+		output_json(sd);
+
+	report_simple_stat(sd);
+
+	for (i = 0; i < sd.nth; i++)
+		selfish_rec_finilize(sd.srs[i]);
 
 	return 0;
 }

@@ -1,8 +1,8 @@
 
 TARGET=omp-selfishloop
 
-omp-selfishloop : omp-selfishloop.c rdtsc.h
-	gcc -o $@ -O2 -Wall -fopenmp $< -lgomp
+omp-selfishloop : omp-selfishloop.c selfish_json.c selfish_stat.c
+	gcc -o $@ -O2 -Wall -fopenmp $^ -lgomp -lm
 
 clean:
 	rm -f $(TARGET)
