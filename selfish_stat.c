@@ -82,15 +82,17 @@ void report_simple_stat(struct selfish_data *sd)
 	int i;
 	struct selfish_rec *sr;
 
-	printf("# cpuid detour[%%] mean[usec] std\n");
+	printf("# cpuid detour[%%] mean[usec] niterated nrecorded \n");
 	for (i = 0; i < sd->nth; i++) {
 		analyze(sd, i);
 
 		sr = sd->srs[i];
 
-		printf("%2d %lf %lf %lf\n", i,
+		printf("%2d %lf %lf %lu %d\n", i,
 		       sr->sum * 100.0 / (double)sr->elapsed,
 		       ticks2usec(sd, sr->mean),
-		       ticks2usec(sd, sr->sd));
+		       sr->niterated,
+		       sr->nrecorded
+		       );
 	}
 }
