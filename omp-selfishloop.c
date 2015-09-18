@@ -1,7 +1,9 @@
 /*
-  omp version of selfish noise recoder
-
-  Kazutomo Yoshii <ky@anl.gov>
+ * OpenMP version of selfish noise recoder
+ *
+ * Coding style: https://www.kernel.org/doc/Documentation/CodingStyle
+ *
+ * Contact:  Kazutomo Yoshii <ky@anl.gov>
  */
 #define _GNU_SOURCE
 #include <sched.h>
@@ -28,7 +30,7 @@ struct selfish_rec {
 
 	/* fill by selfishloop() */
 	uint64_t max, min;
-	struct selfish_detour *detours; // alloc by caller
+	struct selfish_detour *detours; /* alloc by caller */
 	uint64_t elapsed;
 	int nrecorded;
 	uint64_t niterated;
@@ -38,24 +40,27 @@ struct selfish_rec {
 	double  detour_sum;
 };
 
-static struct selfish_rec *selfish_rec_init(int ndetours, uint64_t threshold, uint64_t timeout)
+static struct selfish_rec *selfish_rec_init(
+			  int ndetours, uint64_t threshold,
+			  uint64_t timeout)
 {
 	struct selfish_rec *sr;
 
 	sr = calloc(1, sizeof(struct selfish_rec));
-	if(!sr) 
+	if (!sr)
 		return NULL;
 
 	sr->ndetours = ndetours;
 	sr->threshold = threshold;
 	sr->timeout = timeout;
 
-	if( posix_memalign( (void*)&sr->detours, getpagesize(), sizeof(struct selfish_detour)*sr->ndetours) ) {
+	if (posix_memalign((void *)&sr->detours, getpagesize(),
+			   sizeof(struct selfish_detour) * sr->ndetours)) {
 		perror("posix_memalign");
 		free(sr);
 		return NULL;
 	}
-	memset( sr->detours, 0, sizeof(struct selfish_detour)*sr->ndetours);
+	memset(sr->detours, 0, sizeof(struct selfish_detour) * sr->ndetours);
 
 	return sr;
 }
@@ -73,43 +78,44 @@ static void selfish_rec_finilize(struct selfish_rec *sr)
 
 static inline void rdtsc_barrier(void)
 {
-	// lfence prevents from instruction reodering
-	asm volatile ( "lfence" : : : "memory" ); // XXX: Intel only
+	/* lfence prevents from instruction reodering */
+	asm volatile ("lfence" : : : "memory"); /* XXX: Intel only */
 }
 
 void selfish_rec_loop(struct selfish_rec *sr)
 {
 	uint64_t prev, cur, delta, start;
 	uint64_t niterated = 0;
-	int idx = -10; // minus number for warmups
+	int idx = -10; /* minus number for warmups */
 
-	if (!sr) return;
+	if (!sr)
+		return;
 
 	sr->nrecorded = 0;
 	sr->max = 0;
 	sr->min = 1<<31;
 
 	start = prev = rdtsc();
-	for (niterated = 0;;niterated++) {
+	for (niterated = 0; ; niterated++) {
 		rdtsc_barrier();
 		cur = rdtsc();
 		rdtsc_barrier();
 		delta = cur - prev;
 		if (delta > sr->threshold) {
-			if (idx >= 0 ) {
+			if (idx >= 0) {
 				if (idx == 0)
 					start = prev;
 				sr->detours[idx].start = prev;
 				sr->detours[idx].duration = delta;
-				sr->nrecorded ++;
+				sr->nrecorded++;
 			}
-			idx ++;
-			if (!(idx < sr->ndetours)) 
+			idx++;
+			if (!(idx < sr->ndetours))
 				break;
 		}
-		if ((cur - start) >= sr->timeout) 
+		if ((cur - start) >= sr->timeout)
 			break;
-		if (delta > sr->max) 
+		if (delta > sr->max)
 			sr->max = delta;
 		if (delta < sr->min)
 			sr->min = delta;
@@ -125,14 +131,17 @@ static void calc_detour_percent(struct selfish_rec *sr)
 {
 	int i;
 	double  sum = 0.0;
-	for (i=0; i<sr->ndetours; i++) {
+
+	for (i = 0; i < sr->ndetours; i++)
 		sum += (double)sr->detours[i].duration;
-	}
+
 	sr->detour_sum = sum;
 	sr->detour_percent = (double)sum*100.0/(double)sr->elapsed;
 }
 
-static void selfish_rec_output(struct selfish_rec *sr, const char* prefix, int tno, uint64_t tickspersec)
+static void selfish_rec_output(struct selfish_rec *sr,
+			       const char *prefix, int tno,
+			       uint64_t tickspersec)
 {
 	int i;
 	FILE *fp;
@@ -145,31 +154,32 @@ static void selfish_rec_output(struct selfish_rec *sr, const char* prefix, int t
 	fp = fopen(fn, "w");
 	if (!fp) {
 		printf("Failed to write to %s\n", fn);
-		return ;
+		return;
 	}
 
-	for (i=0; i<sr->nrecorded; i++) {
+	for (i = 0; i < sr->nrecorded; i++) {
 		uint64_t s, d;
+
 		s = sr->detours[i].start -  sr->detours[0].start;
 		d = sr->detours[i].duration;
-		fprintf(fp,"%.3lf %.3lf    %lu  %lu\n",
+		fprintf(fp, "%.3lf %.3lf    %lu  %lu\n",
 			(double)s/(double)(tickspersec/1000/1000),
 			(double)d/(double)(tickspersec/1000/1000),
-			s,d );
+			s, d);
 	}
 	fclose(fp);
 }
 
 
-static void selfish_rec_report( struct selfish_rec *sr, int tno)
+static void selfish_rec_report(struct selfish_rec *sr, int tno)
 {
 	if (!sr)
 		return;
-	
+
 	printf("%3d: dutour=%.3lf %%  elapsed=%lu  min=%lu max=%lu nr=%d\n",
 	       tno,
 	       sr->detour_percent,  sr->elapsed,
-	       sr->min, sr->max, sr->nrecorded );
+	       sr->min, sr->max, sr->nrecorded);
 }
 
 
@@ -179,13 +189,13 @@ void set_strict_affinity(int cpuid)
 
 	CPU_ZERO(&cpuset_mask);
 	CPU_SET(cpuid, &cpuset_mask);
-	if ( sched_setaffinity(0, sizeof(cpuset_mask), &cpuset_mask) == -1 ) {
+	if (sched_setaffinity(0, sizeof(cpuset_mask), &cpuset_mask) == -1) {
 		printf("sched_setaffinity() failed\n");
 		exit(1);
 	}
 }
 
-static void  usage(const char* prog)
+static void  usage(const char *prog)
 {
 	printf("Usage: %s [options]\n", prog);
 	printf("\n");
@@ -194,7 +204,8 @@ static void  usage(const char* prog)
 	printf("-v : enable verbose output\n");
 	printf("-n int : the size of the detour record array\n");
 	printf("-t int : timeout in ticks\n");
-	printf("-d int : threshold in ticks.  detours longer than this value are recorded\n");
+	printf("-d int : threshold in ticks.\n");
+	printf("         detours longer than this value are recorded\n");
 	printf("-o prefix : output detours data per-thread.\n");
 	printf("\n");
 	printf("\n");
@@ -205,14 +216,14 @@ static double measure_tickspersec(void)
 	double    wt1, wt2;
 	uint64_t  t1, t2;
 	double  timeout = 2.0;
-	
+
 	wt1 = omp_get_wtime();
 	rdtsc_barrier();
 	t1 = rdtsc();
 	rdtsc_barrier();
 
-	while(1) {
-		if( (omp_get_wtime() - wt1) >= timeout )
+	while (1) {
+		if ((omp_get_wtime() - wt1) >= timeout)
 			break;
 	}
 	rdtsc_barrier();
@@ -237,10 +248,11 @@ int main(int argc, char *argv[])
 	uint64_t timeoutticks;
 	uint64_t tickspersec;
 	char oprefix[80];
+
 	oprefix[0] = 0;
 
 	while ((opt = getopt(argc, argv, "vhn:d:t:o:")) != -1) {
-		switch(opt) {
+		switch (opt) {
 		case 'h':
 			usage(argv[0]);
 			exit(1);
@@ -269,21 +281,21 @@ int main(int argc, char *argv[])
 
 	tickspersec = measure_tickspersec();
 	timeoutticks = tickspersec * timeoutsec;
-	
+
 	printf("# ndetours:     %u\n", ndetours);
 	printf("# threshold:    %lu (ticks)\n", threshold);
 	printf("# tickspersec:  %lu (ticks)\n", tickspersec);
 	printf("# timeoutsec:   %d (sec)\n", timeoutsec);
 	printf("# timeoutticks: %lu (ticks)\n", timeoutticks);
-	if (strlen(oprefix) > 0 ) {
+	if (strlen(oprefix) > 0)
 		printf("# outputprefix: %s\n", oprefix);
-	}
 
 #pragma omp parallel shared(nth, ndetours, threshold, timeoutticks, \
 			    av_percent, av_niterated, av_nrecorded)
 	{
 		struct selfish_rec *sr;
 		int tno;
+
 		tno = omp_get_thread_num();
 		if (tno == 0) {
 			nth = omp_get_num_threads();
@@ -299,13 +311,13 @@ int main(int argc, char *argv[])
 		selfish_rec_loop(sr);
 		calc_detour_percent(sr);
 #pragma omp barrier
-		if (verbose) 
+		if (verbose)
 			selfish_rec_report(sr, tno);
 
-		if (strlen(oprefix) > 0 )
+		if (strlen(oprefix) > 0)
 			selfish_rec_output(sr, oprefix, tno, tickspersec);
 
-#pragma omp critical 
+#pragma omp critical
 		{
 			av_percent += sr->detour_percent;
 			av_niterated += sr->niterated;
